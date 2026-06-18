@@ -2,50 +2,50 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import os
 
-st.set_page_config(page_title="Dashboard de Seguridad", page_icon="🛡️", layout="wide")
+# 1. Configuración VIP de la página (Sin menú lateral)
+st.set_page_config(page_title="Dashboard de Seguridad", page_icon="🛡️", layout="wide", initial_sidebar_state="collapsed")
 
-# Menú lateral para subir los archivos
-st.sidebar.header("📥 Carga de Datos")
+# 2. Nombres fijos de los archivos (Deben estar en la misma carpeta que este código en GitHub)
+FILE_HIST = "historial.xlsx"
+FILE_USR = "usuarios.xlsx"
+FILE_LLAVES = "llaves.xlsx"
 
-# --- NUEVO: Campo para el nombre del cliente ---
-cliente_manual = st.sidebar.text_input("🏢 Nombre del Cliente (Opcional)", placeholder="Ej. Homecenter")
-st.sidebar.markdown("*(Si lo dejas en blanco, el sistema detectará la empresa por los correos).*")
-# -----------------------------------------------
+# 3. Verificación y carga automática
+if os.path.exists(FILE_HIST) and os.path.exists(FILE_USR) and os.path.exists(FILE_LLAVES):
+    with st.spinner('Cargando reporte gerencial interactivo...'):
+        df_hist = pd.read_excel(FILE_HIST)
+        df_usr = pd.read_excel(FILE_USR)
+        df_llaves = pd.read_excel(FILE_LLAVES)
 
-file_hist = st.sidebar.file_uploader("1. Subir Historial de Acceso", type=["xlsx"])
-file_usr = st.sidebar.file_uploader("2. Subir Usuarios", type=["xlsx"])
-file_llaves = st.sidebar.file_uploader("3. Subir Llaves", type=["xlsx"])
-
-if file_hist and file_usr and file_llaves:
-    with st.spinner('Procesando datos y configurando cliente...'):
-        df_hist = pd.read_excel(file_hist)
-        df_usr = pd.read_excel(file_usr)
-        df_llaves = pd.read_excel(file_llaves)
-
-        # --- NUEVO: Detección Automática de Cliente ---
-        if cliente_manual:
-            nombre_cliente = cliente_manual.upper()
-        else:
-            try:
-                # Extraer el dominio del email (ej. de 'user@homecenter.co' saca 'homecenter.co')
-                dominios = df_usr['Email'].dropna().str.split('@').str[1]
-                # Filtrar correos de soporte propios (jonyco, sera4, gmail, etc.)
-                dominios_reales = dominios[~dominios.str.contains('jonyco|sera4|gmail|hotmail|yahoo', na=False, case=False)]
-                if not dominios_reales.empty:
-                    # Toma el dominio más repetido y le quita el '.co' o '.com'
-                    empresa_detectada = dominios_reales.mode()[0].split('.')[0].upper()
-                    nombre_cliente = empresa_detectada
-                else:
-                    nombre_cliente = "EMPRESA CLIENTE"
-            except:
+        # --- Detección Automática de Cliente y Logo ---
+        dominio_detectado = None
+        try:
+            dominios = df_usr['Email'].dropna().str.split('@').str[1]
+            dominios_reales = dominios[~dominios.str.contains('jonyco|sera4|gmail|hotmail|yahoo', na=False, case=False)]
+            if not dominios_reales.empty:
+                dominio_detectado = dominios_reales.mode()[0]
+                nombre_cliente = dominio_detectado.split('.')[0].upper()
+            else:
                 nombre_cliente = "EMPRESA CLIENTE"
-        # ----------------------------------------------
+        except:
+            nombre_cliente = "EMPRESA CLIENTE"
 
-        # Mostrar el título personalizado
-        st.title(f"🛡️ Dashboard Interactivo de Seguridad - {nombre_cliente}")
+        # --- CABECERA VIP ---
+        st.markdown("---")
+        col_logo, col_titulo = st.columns([1, 8])
+        with col_logo:
+            if dominio_detectado:
+                st.image(f"https://logo.clearbit.com/{dominio_detectado}", width=100)
+            else:
+                st.write("🛡️")
+        with col_titulo:
+            st.title(f"Dashboard Interactivo de Seguridad - {nombre_cliente}")
+            st.markdown("### 📊 Informe Operativo generado por **JONYCO**")
+        st.markdown("---")
 
-        # Limpieza de datos (igual que antes)
+        # --- Limpieza de datos ---
         df_hist['Abierta'] = pd.to_datetime(df_hist['Abierta'], utc=True).dt.tz_convert('America/Bogota')
         df_hist['Fecha'] = df_hist['Abierta'].dt.date
         df_hist['Hora'] = df_hist['Abierta'].dt.hour
@@ -57,11 +57,10 @@ if file_hist and file_usr and file_llaves:
         usuarios_sin_actividad = df_usr[~df_usr['Nombre Completo'].str.upper().isin(usuarios_con_actividad)]
         usuarios_sin_actividad = usuarios_sin_actividad[usuarios_sin_actividad['Estado'] != 'Eliminado']
 
-        # KPIs
+        # --- KPIs ---
         activos = len(df_usr[df_usr['Estado'] != 'Eliminado'])
         admins = len(df_usr[(df_usr['Estado'] != 'Eliminado') & (df_usr['Grupo de Usuario'].isin(['Administradores', 'Administradores de Acceso']))])
         
-        st.markdown("---")
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Usuarios en Plataforma", f"{activos}", f"{admins} Administradores")
         col2.metric("Candados Evaluados", f"{df_hist['Nombre de la Cerradura'].nunique()}")
@@ -69,7 +68,7 @@ if file_hist and file_usr and file_llaves:
         col4.metric("Llaves Generadas", f"{len(df_llaves)}")
         st.markdown("---")
 
-        # Selectores interactivos y Gráficos
+        # --- Selectores y Gráficos ---
         st.subheader("📈 Actividad Diaria por Tienda")
         tipo_grafico_diario = st.radio("Formato de gráfica:", ["Líneas de Tendencia", "Barras Agrupadas", "Área Apilada"], horizontal=True)
         df_daily = df_hist.groupby(['Fecha', 'Nombre de la Cerradura']).size().reset_index(name='Aperturas')
@@ -119,9 +118,11 @@ if file_hist and file_usr and file_llaves:
         anomalias['Abierta'] = anomalias['Abierta'].dt.strftime('%Y-%m-%d %H:%M:%S')
         st.dataframe(anomalias, use_container_width=True)
 
-        st.subheader("👻 Riesgo: Usuarios con 0 Interacciones")
+        st.subheader("⚠️Analizar: Usuarios con 0 Interacciones")
         st.dataframe(usuarios_sin_actividad[['Nombre Completo', 'Email', 'Grupo de Usuario']], use_container_width=True)
 
 else:
+    # Pantalla de error si faltan los archivos en el servidor
+    st.error("⚠️ Los archivos de datos operativos no se encuentran en el servidor. Por favor, comunícate con el soporte de JONYCO.")
     st.title("🛡️ Dashboard Interactivo de Seguridad")
     st.info("👈 Sube los 3 archivos de Excel en el panel izquierdo (Historial, Usuarios y Llaves) para comenzar el análisis.")
